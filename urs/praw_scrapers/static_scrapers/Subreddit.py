@@ -4,16 +4,18 @@ Subreddit scraper
 Defining methods for the Subreddit scraper.
 """
 
-
+import json
 import logging
 from argparse import Namespace
 from typing import Any, Dict, Iterator, List, Tuple
+import time
 
 from colorama import Fore, Style
 from halo import Halo
 from praw import Reddit
 from praw.models import Subreddit
 from prettytable import PrettyTable
+from taisun.comments_utils import CommentNode, Forest
 
 from urs.praw_scrapers.utils.Objectify import Objectify
 from urs.praw_scrapers.utils.Validation import Validation
@@ -265,7 +267,7 @@ class FormatSubmissions:
     """
 
     @staticmethod
-    def format_submissions(submissions: Iterator[Any]) -> List[Dict[str, Any]]:
+    def format_submissions(submissions: Iterator[Any], comments = None) -> List[Dict[str, Any]]:
         """
         Format submissions to dictionary structure.
 
@@ -276,7 +278,7 @@ class FormatSubmissions:
         """
 
         return [
-            Objectify().make_submission(False, submission) for submission in submissions
+            Objectify().make_submission(False, submission, comments[index]) for index, submission in enumerate(submissions)
         ]
 
 
@@ -417,6 +419,7 @@ class GetSortWrite:
         sub: str,
         subreddit: Subreddit,
         time_filter: str,
+        reddit: Reddit
     ) -> Dict[str, Any]:
         """
         Get and sort submissions.
@@ -434,7 +437,49 @@ class GetSortWrite:
         """
 
         submissions = GetSubmissions.get(cat_i, search_for, sub, subreddit, time_filter)
-        submissions = FormatSubmissions.format_submissions(submissions)
+        comments = []
+        
+        for submission in submissions:
+            rate_info = Validation.get_rate_info(reddit)
+            print(int(rate_info['reset_timestamp']), int(time.time()))
+            if (rate_info['remaining'] < 500):
+                wait_seconds = int(rate_info['reset_timestamp']) - int(time.time())
+                waiting_status = Status(
+                    "Finished waiting.",
+                    Fore.CYAN
+                    + Style.BRIGHT
+                    + f"Waiting for {wait_seconds} to reset Reddit API limits. Please wait.",
+                    "yellow",
+                )
+                
+                waiting_status.start()
+                time.sleep(wait_seconds)
+                waiting_status.succeed()
+                
+            more_comments_status = Status(
+                "Finished resolving instances of MoreComments.",
+                Fore.CYAN
+                + Style.BRIGHT
+                + "Resolving instances of MoreComments. This may take a while. Please wait.",
+                "cyan",
+            )
+
+            more_comments_status.start()
+            submission.comments.replace_more(limit=None)
+            more_comments_status.succeed()
+            
+            forest = Forest(submission.id_from_url('https://reddit.com' + submission.permalink))
+            
+            for comment in submission.comments.list():
+                comment_node = CommentNode(
+                    json.dumps((Objectify().make_comment(comment, False)))
+                )
+
+                forest.seed_comment(comment_node)
+            comments.append(forest.root.replies if len(forest.root.replies) > 0 else [])
+
+        submissions = GetSubmissions.get(cat_i, search_for, sub, subreddit, time_filter)
+        submissions = FormatSubmissions.format_submissions(submissions, comments)
 
         if args.csv:
             return FormatCSV.format_csv(submissions)
@@ -498,7 +543,7 @@ class GetSortWrite:
                 subreddit = reddit.subreddit(sub)
 
                 data = GetSortWrite._get_sort(
-                    args, cat_i, str(each_sub[1]), sub, subreddit, each_sub[2]
+                    args, cat_i, str(each_sub[1]), sub, subreddit, each_sub[2], reddit
                 )
                 GetSortWrite._write(args, cat_i, data, each_sub, sub)
 

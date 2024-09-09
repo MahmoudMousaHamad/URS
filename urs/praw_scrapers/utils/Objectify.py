@@ -30,9 +30,11 @@ class Objectify:
 
         comment_object = {
             "author": "u/" + comment.author.name
-            if hasattr(comment.author, "name")
+            if hasattr(comment, 'author') and hasattr(comment.author, "name")
             else "[deleted]",
-            "body": comment.body,
+            "body": comment.body 
+            if hasattr(comment, 'body') 
+            else '',
             "body_html": comment.body_html,
             "created_utc": convert_time(comment.created_utc),
             "distinguished": comment.distinguished,
@@ -89,7 +91,7 @@ class Objectify:
         return multireddit_object
 
     def make_submission(
-        self, include_all: bool, submission: Submission
+        self, include_all: bool, submission: Submission, comments = None
     ) -> Dict[str, Any]:
         """
         Make a submission object.
@@ -126,6 +128,7 @@ class Objectify:
             "title": submission.title,
             "upvote_ratio": submission.upvote_ratio,
             "url": submission.url,
+            "comments": [vars(comment) for comment in comments],
         }
 
         if include_all:
